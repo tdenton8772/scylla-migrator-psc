@@ -17,26 +17,6 @@ Needs ScyllaDB Enterprise 2026.1 or later on the target cluster.
     sbt package     # -> target/scala-2.13/psc-factory_2.13-0.1.0.jar
     sbt test        # 12 tests covering the routing decision
 
-## Why this exists
-
-The driver can read client routes from HOCON
-(`datastax-java-driver.advanced.client-routes`), but that setting is global: it
-applies to every session the JVM builds and cannot be narrowed to one cluster.
-That breaks any migration where the two sides need different connection
-settings, and it fails hard when the source is DataStax Astra -
-
-    IllegalStateException: Both a secure connect bundle and client routes
-    configuration were provided. They are mutually exclusive.
-
-A connection factory sees each session individually, so it can decide per
-cluster:
-
-    session uses a secure connect bundle   -> no client routes (Astra, untouched)
-    session matches spark.scylla.psc.hosts -> client routes
-    hosts not set                          -> client routes on every non-bundle session
-
----
-
 ## 1. Get your connection id
 
 Run from a host inside your VPC:
