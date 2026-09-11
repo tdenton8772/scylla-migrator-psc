@@ -103,6 +103,11 @@ On Kubernetes, check the executor pods, not just the driver.
 
 ---
 
+## Deploying on GKE
+
+For running this as a Spark job on GKE with YuniKorn, see
+[DEPLOY-GKE.md](DEPLOY-GKE.md).
+
 ## Notes
 
 - TLS is not available over the private endpoint today (`tls_port` is null).
