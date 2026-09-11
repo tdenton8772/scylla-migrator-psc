@@ -108,6 +108,28 @@ On Kubernetes, check the executor pods, not just the driver.
 For running this as a Spark job on GKE with YuniKorn, see
 [DEPLOY-GKE.md](DEPLOY-GKE.md).
 
+## If node resolution fails
+
+    UnknownHostException: scylla-psc-<...>.clusters.scylla.cloud: Name does not resolve
+    ... at ClientRoutesEndPoint.resolve
+
+Client routes worked — the driver read `system.client_routes` and translated the
+node addresses. It then could not resolve the hostname that table returned.
+
+This happens when you reach the endpoint through your own DNS name rather than
+ScyllaDB Cloud's, and ScyllaDB Cloud's private DNS zone is not attached to your
+VPC. Override the address with a name your network does resolve:
+
+    --conf spark.scylla.psc.connectionAddr=<your-endpoint-hostname>
+
+or skip DNS entirely:
+
+    --conf spark.scylla.psc.connectionAddr=<endpoint-ip>
+
+The per-node ports still come from `system.client_routes`; only the host is
+replaced. All nodes sit behind the one endpoint address on different ports, so a
+single value covers the whole cluster.
+
 ## Notes
 
 - TLS is not available over the private endpoint today (`tls_port` is null).
