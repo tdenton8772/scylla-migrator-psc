@@ -4,6 +4,7 @@ import com.datastax.oss.driver.api.core.CqlSession
 import com.datastax.oss.driver.api.core.config.{
   ClientRouteProxy,
   ClientRoutesConfig,
+  DefaultDriverOption,
   DriverConfigLoader
 }
 import com.datastax.spark.connector.cql.{
@@ -72,6 +73,24 @@ object ClientRoutesFactory extends CassandraConnectionFactory {
     */
   private val HostsKey = "spark.scylla.psc.hosts"
 
+  /** Opt in to shard awareness through the endpoint. Off by default, and it should stay off
+    * unless the whole path supports it.
+    *
+    * The driver targets a shard by binding a particular local source port, which ScyllaDB reads to
+    * route the connection. A load balancer rewrites that port, so ScyllaDB picks a different shard
+    * than the driver asked for and logs:
+    *
+    * {{{
+    * New channel ... connected to shard 1, but shard 0 was requested.
+    * }}}
+    *
+    * Setting this to true is only correct when the load balancer forwards the client's original
+    * source address with Proxy Protocol v2 and ScyllaDB is configured to accept it. Without that,
+    * leave it off: the factory then disables the driver's own shard-aware port binding, which
+    * stops the warning and the reconnection churn behind it.
+    */
+  private val ShardAwarenessKey = "spark.scylla.psc.shardAwareness"
+
   @transient private lazy val log = LoggerFactory.getLogger(getClass)
 
   override def createSession(conf: CassandraConnectorConf): CqlSession = {
@@ -92,9 +111,19 @@ object ClientRoutesFactory extends CassandraConnectionFactory {
         )
         // Reuse the connector's own option builder so every pool size, timeout, retry and TLS
         // setting it derives from CassandraConnectorConf still applies.
-        val configLoader = DefaultConnectionFactory
-          .connectorConfigBuilder(conf, DriverConfigLoader.programmaticBuilder())
-          .build()
+        val shardAwareness = sparkConf.getBoolean(ShardAwarenessKey, defaultValue = false)
+        val builder =
+          DefaultConnectionFactory.connectorConfigBuilder(conf, DriverConfigLoader.programmaticBuilder())
+        val configLoader =
+          (if (shardAwareness) builder
+           else
+             // Shard-aware port binding cannot survive the load balancer's source-port rewrite.
+             // Leaving it on (the driver's default) makes every pooled connection land on an
+             // unintended shard and be retried.
+             builder.withBoolean(
+               DefaultDriverOption.CONNECTION_ADVANCED_SHARD_AWARENESS_ENABLED,
+               false
+             )).build()
 
         val appName = Option(SparkEnv.get).map(_.conf.getAppId).getOrElse("NoAppID")
         val ipConf = conf.contactInfo.asInstanceOf[IpBasedContactInfo]
@@ -184,6 +213,7 @@ object ClientRoutesFactory extends CassandraConnectionFactory {
       .map { ids =>
         val addr = sparkConf.getOption(ConnectionAddrKey).map(_.trim).filter(_.nonEmpty)
         val builder = ClientRoutesConfig.builder()
+        builder.withShardAwareness(sparkConf.getBoolean(ShardAwarenessKey, defaultValue = false))
         // A comma-separated list covers a cluster fronted by one endpoint per availability zone.
         ids.split(",").map(_.trim).filter(_.nonEmpty).distinct.foreach { id =>
           builder.addEndpoint(new ClientRouteProxy(id, addr.orNull))

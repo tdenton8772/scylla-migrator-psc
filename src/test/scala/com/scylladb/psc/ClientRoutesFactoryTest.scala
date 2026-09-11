@@ -18,9 +18,9 @@ import scala.jdk.CollectionConverters._
   */
 class ClientRoutesFactoryTest extends munit.FunSuite {
 
-  private val ConnId = "11111111-2222-3333-4444-555555555555"
-  private val ConnId2 = "66666666-7777-8888-9999-000000000000"
-  private val PscHost = "private-endpoint.example.com"
+  private val ConnId = "037d7155-d76f-5244-ac7d-2993b44bab16"
+  private val ConnId2 = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+  private val PscHost = "scylla-psc-nr67015-728978d2.clusters.scylla.cloud"
 
   private def conf(entries: (String, String)*): SparkConf =
     entries.foldLeft(new SparkConf(false)) { case (c, (k, v)) => c.set(k, v) }
@@ -79,7 +79,7 @@ class ClientRoutesFactoryTest extends munit.FunSuite {
     // system.client_routes on a server that has no such table, and the migration dies with
     // "Server does not support CLIENT_ROUTES_CHANGE".
     val c = conf("spark.scylla.psc.connectionId" -> ConnId, "spark.scylla.psc.hosts" -> PscHost)
-    val d = ClientRoutesFactory.decide(ip("cassandra.internal.example.com"), c)
+    val d = ClientRoutesFactory.decide(ip("cassandra-0.cassandra.cass.svc.cluster.local"), c)
     d match {
       case ClientRoutesFactory.PlainSession(reason) => assert(reason.contains("not listed"), reason)
       case other                                    => fail(s"expected a plain session, got $other")
@@ -121,10 +121,31 @@ class ClientRoutesFactoryTest extends munit.FunSuite {
   test("connectionAddr overrides the address from system.client_routes") {
     val c = conf(
       "spark.scylla.psc.connectionId"   -> ConnId,
-      "spark.scylla.psc.connectionAddr" -> "10.0.0.10"
+      "spark.scylla.psc.connectionAddr" -> "10.128.0.36"
     )
     val routes = ClientRoutesFactory.clientRoutesConfig(c).getOrElse(fail("expected a config"))
-    assertEquals(routes.getEndpoints.asScala.head.getConnectionAddrOverride, "10.0.0.10")
+    assertEquals(routes.getEndpoints.asScala.head.getConnectionAddrOverride, "10.128.0.36")
+  }
+
+  test("shard awareness is off unless explicitly enabled") {
+    // Through a load balancer the driver cannot target a shard by local source port, so this
+    // stays off unless the operator confirms Proxy Protocol v2 is configured end to end.
+    val routes = ClientRoutesFactory
+      .clientRoutesConfig(conf("spark.scylla.psc.connectionId" -> ConnId))
+      .getOrElse(fail("expected a config"))
+    assertEquals(routes.isShardAwarenessEnabled, false)
+  }
+
+  test("shard awareness can be opted into") {
+    val routes = ClientRoutesFactory
+      .clientRoutesConfig(
+        conf(
+          "spark.scylla.psc.connectionId"   -> ConnId,
+          "spark.scylla.psc.shardAwareness" -> "true"
+        )
+      )
+      .getOrElse(fail("expected a config"))
+    assertEquals(routes.isShardAwarenessEnabled, true)
   }
 
   test("an empty connection id is treated as unset") {

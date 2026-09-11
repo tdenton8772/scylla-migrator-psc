@@ -130,6 +130,33 @@ The per-node ports still come from `system.client_routes`; only the host is
 replaced. All nodes sit behind the one endpoint address on different ports, so a
 single value covers the whole cluster.
 
+## If the log says the wrong shard was requested
+
+    WARN ChannelPool: New channel ... connected to shard 1, but shard 0 was
+    requested. If this is not transient check your driver AND cluster
+    configuration of shard aware port.
+
+Expected behind a private endpoint, and handled automatically since 0.1.0.
+
+The driver targets a specific shard by binding a particular local source port,
+which ScyllaDB reads to route the connection. A load balancer rewrites that
+port, so the connection lands on a different shard than the driver asked for.
+The factory therefore turns the driver's shard-aware port binding off whenever
+client routes are active.
+
+If you are on an older jar, the same thing can be done without rebuilding:
+
+    --conf spark.driver.extraJavaOptions="-Ddatastax-java-driver.advanced.connection.advanced-shard-awareness.enabled=false" \
+    --conf spark.executor.extraJavaOptions="-Ddatastax-java-driver.advanced.connection.advanced-shard-awareness.enabled=false"
+
+Shard awareness can be restored end to end, but only if the load balancer
+forwards the client's original source address using Proxy Protocol v2 and
+ScyllaDB is configured to accept it. With both in place:
+
+    --conf spark.scylla.psc.shardAwareness=true
+
+Do not set it otherwise — the warning will simply come back.
+
 ## Notes
 
 - TLS is not available over the private endpoint today (`tls_port` is null).
